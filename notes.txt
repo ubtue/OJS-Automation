@@ -1,0 +1,27 @@
+sudo apt update / yum update
+
+sudo apt install python3-pip / python3 -m ensurepip
+
+(sudo apt install python3-venv)
+
+(python3 -m venv venv)
+
+python3 -m pip install ansible
+
+ansible-galaxy collection install community.mysql
+
+python3 -m pip install PyMySQL
+
+Main skript liegt auf ub58 ordner "/data/ansible"
+
+
+ansible vault:
+
+ansible-vault create --vault-id quibe01@prompt password.yml
+
+ansible-playbook --vault-id quibe01@prompt --vault-id mysql-root@prompt -i hosts.yml
+
+
+ansible-playbook --vault-id quibe01@prompt --vault-id mysql@pw.txt -i hosts.yml ojs-playbook.yml
+
+

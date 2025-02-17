@@ -1,0 +1,54 @@
+---
+- name: Install apache, php, mariadb and ojs
+  hosts: vms
+  become: true
+  vars:
+    domain: ub49.v264.uni-tuebingen.de
+
+  tasks:
+    - name: update
+      yum:
+        name: "*"
+        state: latest
+
+    - name: stop httpd
+      service:
+        name: httpd
+        state: stopped
+
+    - name: remove apache, mariadb
+      yum:
+        name:
+          - httpd
+          - mariadb
+          - mariadb-server
+        state: absent
+
+    - name: Search for the folder containing the ub49 certificates
+      find:
+        paths: /etc/letsencrypt/live/
+        patterns: "{{domain}}*"
+        use_regex: true
+        file_type: directory
+      register: folders_to_delete
+
+    - name: Display the result
+      debug:
+        var: folders_to_delete
+
+    - name: Deleting the directory
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      with_items: "{{ folders_to_delete.files }}"
+
+    - name: remove different files and folders used by ojs and mysql
+      file:
+        path: "{{item}}"
+        state: absent
+      with_items:
+        - /data/ojs
+        - /var/www/html/ojs
+        - /etc/httpd/conf.d/ojs.conf
+        - /etc/httpd/conf.d/ojs-le-ssl.conf
+        - /var/lib/mysql
