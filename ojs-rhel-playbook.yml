@@ -1,0 +1,148 @@
+---
+- name: Install apache, php, mariadb and ojs
+  hosts: vms
+  become: true
+  vars:
+    mail: lucas.beuter@uni-tuebingen.de # mail adress for the certbot
+    domain: ub49.v264.uni-tuebingen.de # domain name for the certbot
+    ojs_name: ojs
+  vars_files:
+    - mysql-pws.yml
+
+  tasks:
+    - name: update
+      yum:
+        name: "*"
+        state: latest
+
+    # first install all necessary applications
+    - name: install apache, php, mariadb, certbot
+      yum:
+        name:
+          - httpd
+          - php
+          - php-cli
+          - php-common
+          - php-mbstring
+          - php-gd
+          - php-intl
+          - php-xml
+          - php-zip
+          - php-curl
+          - php-bcmath
+          - php-fpm
+          - mariadb-server
+          - certbot
+          - python3-certbot-apache
+        state: latest
+
+    - name: start apache
+      service:
+        name: httpd
+        state: started
+        enabled: true
+
+    - name: start mariadb
+      service:
+        name: mariadb
+        state: started
+        enabled: true
+
+    # install ojs -- also possible to download zip beforehand and reference the path in the src (without remote src true)
+    - name: download ojs and unzip
+      ansible.builtin.unarchive:
+        src: https://pkp.sfu.ca/ojs/download/ojs-3.4.0-8.tar.gz
+        dest: /var/www/html
+        owner: apache
+        group: apache
+        mode: 0775
+        remote_src: true
+
+    # remame folder to just ojs
+    - name: rename to ojs
+      command: mv /var/www/html/ojs-3.4.0-8 /var/www/html/ojs
+      ignore_errors: true
+
+    - name: ojs vhost file (http)
+      template:
+        src: /path/to/file/vhost.ojs.conf.j2
+        dest: /etc/httpd/conf.d/ojs.conf
+        owner: root
+        group: root
+
+    - name: install python pip
+      shell: python3 -m ensurepip
+
+    - name: stop Firewall for pip install
+      shell: /zdv-system/scripts/firewall stop
+
+    - name: install pymysql
+      ansible.builtin.pip:
+        name: PyMySQL
+
+    - name: start firewall again
+      shell: /zdv-system/scripts/firewall start
+
+    # config mysql database
+    - name: add root password
+      community.mysql.mysql_user:
+        login_unix_socket: "/var/lib/mysql/mysql.sock"
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+        name: root
+        password: "{{ mysql_root_password }}"
+        priv: "*.*:ALL"
+        host_all: yes
+        state: present
+
+    - name: add user ojs to database
+      become: true
+      community.mysql.mysql_user:
+        login_unix_socket: "/var/lib/mysql/mysql.sock"
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+        name: ojs
+        password: "{{ mysql_password }}"
+        priv: "*.*:ALL"
+        state: present
+
+    - name: create new database "ojs"
+      community.mysql.mysql_db:
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+        name: ojs
+        state: present
+
+    - name: create data file directory
+      ansible.builtin.file:
+        path: /data/ojs
+        state: directory
+        owner: apache
+        group: apache
+        mode: 0775
+        recurse: true
+
+    - name: configure selinux for apache to allow file modification
+      community.general.sefcontext:
+        target: "{{item}}"
+        setype: httpd_sys_rw_content_t
+        state: present
+      with_items:
+        - "/var/www/html/ojs/cache(/.*)?"
+        - "/var/www/html/ojs/public(/.*)?"
+        - "/data/ojs(/.*)?"
+        - "/var/www/html/ojs/config.inc.php"
+
+    - name: apply new selinux context
+      shell: |
+        restorecon -Rv /var/www/html/ojs
+        restorecon -Rv /data/ojs
+
+    - name: stop Firewall for letsencrypt
+      shell: /zdv-system/scripts/firewall stop
+
+    - name: get certificate
+      shell: certbot run -m "{{ mail }}" --agree-tos -n --apache --domains "{{ domain }}"
+
+    - name: start Firewall again
+      shell: /zdv-system/scripts/firewall start

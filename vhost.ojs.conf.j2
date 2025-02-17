@@ -1,0 +1,11 @@
+<VirtualHost *:80>
+    ServerName {{ojs_name}}
+    DocumentRoot /var/www/html
+    <Directory /var/www/html/{{ojs_name}}>
+        Options -Indexes +FollowSymLinks +MultiViews
+        AllowOverride All
+        Require all granted
+    </Directory>
+    ErrorLog /var/log/httpd/{{ojs_name}}_error.log
+    CustomLog /var/log/httpd/{{ojs_name}}_access.log combined
+</VirtualHost>
