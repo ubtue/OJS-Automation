@@ -4,7 +4,7 @@ import ast
 
 date = datetime.datetime.today().strftime("%Y%m%d")
 
-filename = f"serverFile"
+filename = f"serverliste_{date}"
 
 sheetName = "Info"
 
