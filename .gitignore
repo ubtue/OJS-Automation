@@ -1,2 +1,3 @@
 # environmental variables
 .env
+.vscode/settings.json

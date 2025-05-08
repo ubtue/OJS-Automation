@@ -1,0 +1,151 @@
+---
+- name: Print ansible facts for all hosts (SUDO REQUIRED)
+  hosts: vms
+  order: sorted
+
+  vars:
+    filename: "serverliste_{{date}}.csv"
+    expiration_days: []
+    iptables_state: { "tables": { "filter": [] } }
+
+    headers:
+      - Hostname
+      - IP-Addresse
+      - Zuständigkeit
+      - Server
+      - Funktion
+      - OS
+      - CPU - Cores
+      - RAM (MB)
+      - Betreuung
+      - URLs
+      - expiration days
+      - Shib-Service
+      - Shib-Status
+      - Services
+      - TCP ports
+      - Firewall
+      - Hardware-Besonderheiten
+      - Anmerkungen
+
+    content:
+      - "{{ansible_fqdn}}"
+      - "{{ansible_default_ipv4['address']}}"
+      - "{{remote_yaml['Zuständigkeit']}}"
+      - "{{remote_yaml['Server']}}"
+      - "{{remote_yaml['Funktion']}}"
+      - "{{ansible_distribution}} - {{ansible_distribution_version}}"
+      - "{{ansible_processor[2]}} - {{ansible_processor_cores}}"
+      - "{{ansible_memtotal_mb}}"
+      - "{{remote_yaml['Betreuung']}}"
+      - "{{remote_yaml['URLs']}}"
+      - "{{expiration_days}}"
+      - "{{remote_yaml['Shib-Service']}}"
+      - "{{shibboleth.status.ActiveState}}"
+      - "{{ ansible_facts.services | dict2items
+        | selectattr('value.state', '==', 'running') | map(attribute='key') }}"
+      - "{{ ansible_facts.tcp_listen  | map(attribute='port') | sort | list }}"
+      - "[{{ iptables_state.tables.filter[0] }}, {{ iptables_state.tables.filter[1] }}, {{ iptables_state.tables.filter[2] }}]"
+      - "{{remote_yaml['Hardware-Besonderheiten']}}"
+      - "{{remote_yaml['Anmerkungen']}}"
+
+  tasks:
+    - name: Get date
+      set_fact: date="{{lookup('pipe','date +%Y%m%d')}}"
+      run_once: true
+
+    - name: Create csv and set header
+      local_action: copy content="{{headers | join(';')}}\n" dest="/data/ansible/serverlist/{{filename}}"
+      run_once: true
+      become: true
+
+    - name: check if serverInfo is in etc folder
+      stat:
+        path: /etc/serverInfo.yml
+      register: etc_result
+
+    - name: check if serverInfo in home folder
+      stat:
+        path: "/home/{{ansible_user}}/serverInfo.yml"
+      register: home_result
+
+    - name: Read server info file
+      when: etc_result.stat.exists
+      block:
+        - name: get yaml file
+          slurp:
+            src: /etc/serverInfo.yml
+          register: server_info
+
+        - name: Read remote yaml file
+          set_fact:
+            remote_yaml: "{{ server_info.content | b64decode | from_yaml }}"
+
+    - name: Read server info from home
+      when: home_result.stat.exists and not etc_result.stat.exists
+      block:
+        - name: get yaml file
+          slurp:
+            src: "/home/{{ansible_user}}/serverInfo.yml"
+          register: server_info2
+
+        - name: Read remote yaml file
+          set_fact:
+            remote_yaml: "{{ server_info2.content | b64decode | from_yaml }}"
+
+    - name: Get cert info from url
+      community.crypto.get_certificate:
+        host: "{{item}}"
+        port: 443
+        asn1_base64: true
+      delegate_to: localhost
+      register: cert
+      with_items: "{{remote_yaml['URLs']}}"
+
+    - name: get expiration days
+      set_fact:
+        expiration_days: "{{ expiration_days | default([])+[(
+          (item.not_after | ansible.builtin.to_datetime('%Y%m%d%H%M%SZ')) -
+          (ansible_date_time.iso8601 | ansible.builtin.to_datetime('%Y-%m-%dT%H:%M:%SZ'))
+          ).days] }}"
+      loop: "{{ cert.results }}"
+
+    - name: get service status
+      systemd:
+        name: "shibd"
+      register: shibboleth
+
+    - name: gather all services
+      service_facts:
+
+    - name: gather all ports
+      community.general.listen_ports_facts:
+
+    - name: get current state of the firewall
+      community.general.iptables_state:
+        state: saved
+        path: /usr/sbin/iptables
+      check_mode: true
+      changed_when: false
+      register: iptables_state
+      become: true
+
+    - name: get sudoer
+      community.general.sudoers:
+        state: saved
+        path: /usr/sbin/iptables
+      check_mode: true
+      changed_when: false
+      register: iptables_state
+      become: true
+
+    - name: Write info in csv
+      local_action:
+        module: lineinfile
+        dest: "/data/ansible/serverlist/{{filename}}"
+        line: "{{content | join(';')}}"
+      become: true
+
+    - name: run python script
+      local_action: command python csvtoxlsx.py
+      become: true
